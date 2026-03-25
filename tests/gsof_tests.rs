@@ -4,9 +4,11 @@
 /// GSOF ICD, so the tests are self-contained and require no real
 /// receiver data.  The original C code had no tests at all.
 use gsof_parser::gsof::{
-    parse_gsof_payload, parse_gsof_record, AllDetailedSvInfo, AttitudeInfo, BriefSvInfo,
-    GsofRecord, LatLonHeight, LbandStatus, ParseError, PdopInfo, PositionTime, SvDetailedInfo,
-    UtcTime, Velocity,
+    parse_gsof_payload, parse_gsof_record, AllDetailedSvInfo, AttitudeInfo,
+    BasePositionQuality, BatteryMemoryInfo, BriefSvInfo, ClockInfo, DmiRawData, GsofRecord,
+    InsFullNav, InsRmsInfo, InsVnavFullNav, InsVnavRmsInfo, LatLonHeight, LbandStatus, ParseError,
+    PdopInfo, PositionSigmaInfo, PositionTime, PositionTypeInfo, PositionVcvInfo,
+    ReceivedBaseInfo, ReceiverSerialNumber, SvDetailedInfo, UtcTime, Velocity,
 };
 
 // ---------------------------------------------------------------------------
@@ -20,6 +22,9 @@ fn be_i16(v: i16) -> [u8; 2] {
     v.to_be_bytes()
 }
 fn be_u32(v: u32) -> [u8; 4] {
+    v.to_be_bytes()
+}
+fn be_i32(v: i32) -> [u8; 4] {
     v.to_be_bytes()
 }
 fn be_f32(v: f32) -> [u8; 4] {
@@ -422,4 +427,415 @@ fn display_position_time_does_not_panic() {
     let s = format!("{rec}");
     assert!(s.contains("PositionTime"));
     assert!(s.contains("123456"));
+}
+
+// ---------------------------------------------------------------------------
+// Type 10 — ClockInfo
+// ---------------------------------------------------------------------------
+
+#[test]
+fn clock_info_round_trip() {
+    let mut buf = Vec::new();
+    buf.push(0x03); // flags
+    buf.extend_from_slice(&be_f64(1.234)); // clock offset ms
+    buf.extend_from_slice(&be_f64(-0.567)); // freq offset ppm
+
+    let rec = ClockInfo::parse(&buf).unwrap();
+    assert_eq!(rec.clock_flags, 0x03);
+    assert!((rec.clock_offset_ms - 1.234).abs() < 1e-10);
+    assert!((rec.freq_offset_ppm - (-0.567)).abs() < 1e-10);
+}
+
+#[test]
+fn clock_info_too_short() {
+    let buf = [0u8; 10]; // needs 17
+    assert!(matches!(
+        ClockInfo::parse(&buf).unwrap_err(),
+        ParseError::UnexpectedEof { record_type: 10, .. }
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Type 11 — PositionVcvInfo
+// ---------------------------------------------------------------------------
+
+#[test]
+fn position_vcv_info_round_trip() {
+    let mut buf = Vec::new();
+    for v in [0.5_f32, 1.0, 0.1, 0.2, 2.0, 0.3, 3.0, 0.8] {
+        buf.extend_from_slice(&be_f32(v));
+    }
+    buf.extend_from_slice(&be_u16(42));
+
+    let rec = PositionVcvInfo::parse(&buf).unwrap();
+    assert!((rec.position_rms - 0.5).abs() < 1e-6);
+    assert!((rec.vcv_xx - 1.0).abs() < 1e-6);
+    assert!((rec.vcv_zz - 3.0).abs() < 1e-6);
+    assert_eq!(rec.num_epochs, 42);
+}
+
+// ---------------------------------------------------------------------------
+// Type 12 — PositionSigmaInfo
+// ---------------------------------------------------------------------------
+
+#[test]
+fn position_sigma_info_round_trip() {
+    let mut buf = Vec::new();
+    for v in [0.5_f32, 0.1, 0.2, 0.01, 0.3, 0.4, 0.15, 45.0, 0.9] {
+        buf.extend_from_slice(&be_f32(v));
+    }
+    buf.extend_from_slice(&be_u16(100));
+
+    let rec = PositionSigmaInfo::parse(&buf).unwrap();
+    assert!((rec.position_rms - 0.5).abs() < 1e-6);
+    assert!((rec.sigma_east - 0.1).abs() < 1e-6);
+    assert!((rec.orientation_deg - 45.0).abs() < 1e-6);
+    assert_eq!(rec.num_epochs, 100);
+}
+
+// ---------------------------------------------------------------------------
+// Type 15 — ReceiverSerialNumber
+// ---------------------------------------------------------------------------
+
+#[test]
+fn receiver_serial_number_round_trip() {
+    let buf = be_i32(123456);
+    let rec = ReceiverSerialNumber::parse(&buf).unwrap();
+    assert_eq!(rec.serial_number, 123456);
+}
+
+#[test]
+fn receiver_serial_number_negative() {
+    let buf = be_i32(-1);
+    let rec = ReceiverSerialNumber::parse(&buf).unwrap();
+    assert_eq!(rec.serial_number, -1);
+}
+
+// ---------------------------------------------------------------------------
+// Type 35 — ReceivedBaseInfo
+// ---------------------------------------------------------------------------
+
+#[test]
+fn received_base_info_round_trip() {
+    let mut buf = Vec::new();
+    buf.push(0x08); // flags
+    buf.extend_from_slice(b"BASE0001"); // name (8 bytes)
+    buf.extend_from_slice(&be_u16(42)); // base_id
+    let lat_rad = 43.7_f64.to_radians();
+    let lon_rad = (-79.4_f64).to_radians();
+    buf.extend_from_slice(&be_f64(lat_rad));
+    buf.extend_from_slice(&be_f64(lon_rad));
+    buf.extend_from_slice(&be_f64(174.5)); // height
+
+    let rec = ReceivedBaseInfo::parse(&buf).unwrap();
+    assert_eq!(rec.flags, 0x08);
+    assert_eq!(rec.name_str(), "BASE0001");
+    assert_eq!(rec.base_id, 42);
+    assert!((rec.lat_deg - 43.7).abs() < 1e-7);
+    assert!((rec.lon_deg - (-79.4)).abs() < 1e-7);
+    assert!((rec.height_m - 174.5).abs() < 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// Type 37 — BatteryMemoryInfo
+// ---------------------------------------------------------------------------
+
+#[test]
+fn battery_memory_info_round_trip() {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&be_u16(85)); // battery capacity
+    buf.extend_from_slice(&be_f64(3600.0)); // remaining time
+
+    let rec = BatteryMemoryInfo::parse(&buf).unwrap();
+    assert_eq!(rec.battery_capacity, 85);
+    assert!((rec.remaining_time - 3600.0).abs() < 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// Type 38 — PositionTypeInfo (variable length)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn position_type_info_minimal() {
+    // Only error_scale (4 bytes)
+    let buf = be_f32(1.5);
+    let rec = PositionTypeInfo::parse(&buf).unwrap();
+    assert!((rec.error_scale - 1.5).abs() < 1e-6);
+    assert!(rec.ext_440.is_none());
+    assert!(rec.ext_482.is_none());
+    assert!(rec.ext_490.is_none());
+    assert!(rec.position_fix_type.is_none());
+}
+
+#[test]
+fn position_type_info_with_440() {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&be_f32(1.5)); // error_scale
+    buf.push(0x03); // solution_flags
+    buf.push(0); // rtk_condition
+    buf.extend_from_slice(&be_f32(2.5)); // correction_age
+    buf.push(0x40); // network_flags
+    buf.push(0x01); // network_flags2
+    assert_eq!(buf.len(), 12);
+
+    let rec = PositionTypeInfo::parse(&buf).unwrap();
+    let ext = rec.ext_440.unwrap();
+    assert_eq!(ext.solution_flags, 0x03);
+    assert!((ext.correction_age - 2.5).abs() < 1e-6);
+    assert!(rec.ext_482.is_none());
+}
+
+#[test]
+fn position_type_info_full() {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&be_f32(1.5)); // error_scale (4)
+    buf.push(0x03);
+    buf.push(0);
+    buf.extend_from_slice(&be_f32(2.5));
+    buf.push(0x40);
+    buf.push(0x01); // ext_440 (+8 = 12)
+    buf.push(1); // frame_flag
+    buf.extend_from_slice(&be_i16(2020)); // itrf_epoch
+    buf.push(5); // tectonic_plate
+    buf.extend_from_slice(&be_i32(120)); // rtx_ram (+8 = 20)
+    buf.push(1); // pole_wobble_status
+    buf.extend_from_slice(&be_f32(0.05)); // pole_wobble_distance (+5 = 25)
+    buf.push(3); // position_fix_type (+1 = 26)
+
+    let rec = PositionTypeInfo::parse(&buf).unwrap();
+    assert!(rec.ext_440.is_some());
+    let e482 = rec.ext_482.unwrap();
+    assert_eq!(e482.itrf_epoch, 2020);
+    assert_eq!(e482.rtx_ram_sub_minutes_left, 120);
+    let e490 = rec.ext_490.unwrap();
+    assert_eq!(e490.pole_wobble_status, 1);
+    assert_eq!(rec.position_fix_type, Some(3));
+}
+
+// ---------------------------------------------------------------------------
+// Type 41 — BasePositionQuality
+// ---------------------------------------------------------------------------
+
+#[test]
+fn base_position_quality_round_trip() {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&be_u32(432_000_000)); // gps_time_ms
+    buf.extend_from_slice(&be_u16(2300)); // gps_week
+    let lat_rad = 43.7_f64.to_radians();
+    let lon_rad = (-79.4_f64).to_radians();
+    buf.extend_from_slice(&be_f64(lat_rad));
+    buf.extend_from_slice(&be_f64(lon_rad));
+    buf.extend_from_slice(&be_f64(174.5));
+    buf.push(3); // quality
+
+    let rec = BasePositionQuality::parse(&buf).unwrap();
+    assert_eq!(rec.gps_time_ms, 432_000_000);
+    assert_eq!(rec.gps_week, 2300);
+    assert!((rec.lat_deg - 43.7).abs() < 1e-7);
+    assert_eq!(rec.quality, 3);
+}
+
+// ---------------------------------------------------------------------------
+// Type 49 — InsFullNav
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ins_full_nav_round_trip() {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&be_u16(2300)); // week
+    buf.extend_from_slice(&be_u32(432_000_000)); // time_ms
+    buf.push(4); // imu_alignment
+    buf.push(2); // gps_quality
+    buf.extend_from_slice(&be_f64(43.7)); // lat
+    buf.extend_from_slice(&be_f64(-79.4)); // lon
+    buf.extend_from_slice(&be_f64(174.5)); // alt
+    buf.extend_from_slice(&be_f32(1.0)); // north_vel
+    buf.extend_from_slice(&be_f32(2.0)); // east_vel
+    buf.extend_from_slice(&be_f32(-0.5)); // down_vel
+    buf.extend_from_slice(&be_f32(2.5)); // total_speed
+    buf.extend_from_slice(&be_f64(0.1)); // roll
+    buf.extend_from_slice(&be_f64(0.2)); // pitch
+    buf.extend_from_slice(&be_f64(90.0)); // heading
+    buf.extend_from_slice(&be_f64(89.5)); // track
+    buf.extend_from_slice(&be_f32(0.01)); // ang_rate_x
+    buf.extend_from_slice(&be_f32(0.02)); // ang_rate_y
+    buf.extend_from_slice(&be_f32(0.03)); // ang_rate_z
+    buf.extend_from_slice(&be_f32(0.1)); // accel_x
+    buf.extend_from_slice(&be_f32(0.2)); // accel_y
+    buf.extend_from_slice(&be_f32(-9.8)); // accel_z
+    assert_eq!(buf.len(), 104);
+
+    let rec = InsFullNav::parse(&buf).unwrap();
+    assert_eq!(rec.gps_week, 2300);
+    assert_eq!(rec.gps_time_ms, 432_000_000);
+    assert_eq!(rec.imu_alignment_status, 4);
+    assert_eq!(rec.gps_quality, 2);
+    assert!((rec.lat_deg - 43.7).abs() < 1e-10);
+    assert!((rec.lon_deg - (-79.4)).abs() < 1e-10);
+    assert!((rec.heading_deg - 90.0).abs() < 1e-10);
+    assert!((rec.accel_z - (-9.8_f32)).abs() < 1e-5);
+}
+
+#[test]
+fn ins_full_nav_too_short() {
+    let buf = [0u8; 50]; // needs 104
+    assert!(matches!(
+        InsFullNav::parse(&buf).unwrap_err(),
+        ParseError::UnexpectedEof { record_type: 49, .. }
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Type 50 — InsRmsInfo
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ins_rms_info_round_trip() {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&be_u16(2300));
+    buf.extend_from_slice(&be_u32(432_000_000));
+    buf.push(4); // imu
+    buf.push(2); // gps
+    for v in [0.1_f32, 0.2, 0.3, 0.01, 0.02, 0.03, 0.5, 0.4, 1.0] {
+        buf.extend_from_slice(&be_f32(v));
+    }
+    assert_eq!(buf.len(), 44);
+
+    let rec = InsRmsInfo::parse(&buf).unwrap();
+    assert_eq!(rec.gps_week, 2300);
+    assert!((rec.north_pos_rms - 0.1).abs() < 1e-6);
+    assert!((rec.heading_rms_deg - 1.0).abs() < 1e-6);
+}
+
+// ---------------------------------------------------------------------------
+// Type 52 — DmiRawData
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dmi_raw_data_two_measurements() {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&be_u16(2300)); // week
+    buf.extend_from_slice(&be_u32(100_000)); // time_ms
+    buf.push(2); // count
+
+    // Measurement 1
+    buf.extend_from_slice(&be_u16(10)); // time_offset
+    buf.extend_from_slice(&be_u32(5000)); // abs_dist
+    buf.extend_from_slice(&be_i32(-100)); // ud_dist
+
+    // Measurement 2
+    buf.extend_from_slice(&be_u16(20));
+    buf.extend_from_slice(&be_u32(5100));
+    buf.extend_from_slice(&be_i32(200));
+
+    let rec = DmiRawData::parse(&buf).unwrap();
+    assert_eq!(rec.gps_week, 2300);
+    assert_eq!(rec.measurements.len(), 2);
+    assert_eq!(rec.measurements[0].abs_dist_count, 5000);
+    assert_eq!(rec.measurements[0].ud_dist_count, -100);
+    assert_eq!(rec.measurements[1].ud_dist_count, 200);
+}
+
+#[test]
+fn dmi_raw_data_count_overflow() {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&be_u16(2300));
+    buf.extend_from_slice(&be_u32(100_000));
+    buf.push(20); // count=20, but no measurement data
+    assert!(matches!(
+        DmiRawData::parse(&buf).unwrap_err(),
+        ParseError::OverflowingCount { record_type: 52, .. }
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Type 63 — InsVnavFullNav
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ins_vnav_full_nav_round_trip() {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&be_u16(2300));
+    buf.extend_from_slice(&be_u32(432_000_000));
+    buf.push(4);
+    buf.push(2);
+    buf.extend_from_slice(&be_f64(43.7)); // lat
+    buf.extend_from_slice(&be_f64(-79.4)); // lon
+    buf.extend_from_slice(&be_f64(174.5)); // alt
+    for _ in 0..4 {
+        buf.extend_from_slice(&be_f32(1.0));
+    } // vel + speed
+    for _ in 0..4 {
+        buf.extend_from_slice(&be_f64(0.1));
+    } // attitude + track
+    for _ in 0..6 {
+        buf.extend_from_slice(&be_f32(0.01));
+    } // ang_rate + accel
+    buf.extend_from_slice(&be_f64(0.05)); // heave
+    assert_eq!(buf.len(), 112);
+
+    let rec = InsVnavFullNav::parse(&buf).unwrap();
+    assert_eq!(rec.gps_week, 2300);
+    assert!((rec.heave_m - 0.05).abs() < 1e-10);
+}
+
+// ---------------------------------------------------------------------------
+// Type 64 — InsVnavRmsInfo
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ins_vnav_rms_info_round_trip() {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&be_u16(2300));
+    buf.extend_from_slice(&be_u32(432_000_000));
+    buf.push(4);
+    buf.push(2);
+    for v in [0.1_f32, 0.2, 0.3, 0.01, 0.02, 0.03, 0.5, 0.4, 1.0, 0.05] {
+        buf.extend_from_slice(&be_f32(v));
+    }
+    assert_eq!(buf.len(), 48);
+
+    let rec = InsVnavRmsInfo::parse(&buf).unwrap();
+    assert_eq!(rec.gps_week, 2300);
+    assert!((rec.heave_rms_m - 0.05).abs() < 1e-6);
+}
+
+// ---------------------------------------------------------------------------
+// Dispatcher — new types route correctly
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dispatch_ins_full_nav() {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&be_u16(2300));
+    buf.extend_from_slice(&be_u32(0));
+    buf.push(0);
+    buf.push(0);
+    for _ in 0..3 { buf.extend_from_slice(&be_f64(0.0)); }
+    for _ in 0..4 { buf.extend_from_slice(&be_f32(0.0)); }
+    for _ in 0..4 { buf.extend_from_slice(&be_f64(0.0)); }
+    for _ in 0..6 { buf.extend_from_slice(&be_f32(0.0)); }
+    assert_eq!(buf.len(), 104);
+
+    let rec = parse_gsof_record(49, &buf);
+    assert!(matches!(rec, GsofRecord::InsFullNav(_)));
+    // Ensure Display doesn't panic
+    let _ = format!("{rec}");
+}
+
+#[test]
+fn dispatch_position_type_info() {
+    let buf = be_f32(1.0);
+    let rec = parse_gsof_record(38, &buf);
+    assert!(matches!(rec, GsofRecord::PositionTypeInfo(_)));
+}
+
+#[test]
+fn dispatch_dmi_raw_data_empty() {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&be_u16(2300));
+    buf.extend_from_slice(&be_u32(0));
+    buf.push(0); // zero measurements
+    let rec = parse_gsof_record(52, &buf);
+    assert!(matches!(rec, GsofRecord::DmiRawData(_)));
 }

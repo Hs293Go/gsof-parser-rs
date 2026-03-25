@@ -112,6 +112,10 @@ impl<'a> Reader<'a> {
         Ok(u32::from_be_bytes(self.take::<4>()?))
     }
 
+    pub fn i32(&mut self) -> Result<i32, ParseError> {
+        Ok(i32::from_be_bytes(self.take::<4>()?))
+    }
+
     pub fn f32(&mut self) -> Result<f32, ParseError> {
         Ok(f32::from_be_bytes(self.take::<4>()?))
     }
@@ -158,22 +162,36 @@ const RAD_TO_DEG: f64 = 180.0 / core::f64::consts::PI;
 
 /// Encompasses every decoded GSOF subtype record.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum GsofRecord {
-    PositionTime(PositionTime),           // type 1
-    LatLonHeight(LatLonHeight),           // type 2
-    Ecef(Ecef),                           // type 3
-    LocalDatum(LocalDatum),               // type 4
-    EcefDelta(EcefDelta),                 // type 6
-    TangentPlaneDelta(TangentPlaneDelta), // type 7
-    Velocity(Velocity),                   // type 8
-    PdopInfo(PdopInfo),                   // type 9
-    BriefSvInfo(BriefSvInfo),             // type 13
-    SvDetailedInfo(SvDetailedInfo),       // type 14
-    UtcTime(UtcTime),                     // type 16
-    AttitudeInfo(AttitudeInfo),           // type 27
-    AllBriefSvInfo(AllBriefSvInfo),       // type 33
-    AllDetailedSvInfo(AllDetailedSvInfo), // type 34
-    LbandStatus(LbandStatus),             // type 40
+    PositionTime(PositionTime),                 // type 1
+    LatLonHeight(LatLonHeight),                 // type 2
+    Ecef(Ecef),                                 // type 3
+    LocalDatum(LocalDatum),                     // type 4
+    EcefDelta(EcefDelta),                       // type 6
+    TangentPlaneDelta(TangentPlaneDelta),       // type 7
+    Velocity(Velocity),                         // type 8
+    PdopInfo(PdopInfo),                         // type 9
+    ClockInfo(ClockInfo),                       // type 10
+    PositionVcvInfo(PositionVcvInfo),           // type 11
+    PositionSigmaInfo(PositionSigmaInfo),       // type 12
+    BriefSvInfo(BriefSvInfo),                   // type 13
+    SvDetailedInfo(SvDetailedInfo),             // type 14
+    ReceiverSerialNumber(ReceiverSerialNumber), // type 15
+    UtcTime(UtcTime),                           // type 16
+    AttitudeInfo(AttitudeInfo),                 // type 27
+    AllBriefSvInfo(AllBriefSvInfo),             // type 33
+    AllDetailedSvInfo(AllDetailedSvInfo),       // type 34
+    ReceivedBaseInfo(ReceivedBaseInfo),         // type 35
+    BatteryMemoryInfo(BatteryMemoryInfo),       // type 37
+    PositionTypeInfo(PositionTypeInfo),         // type 38
+    LbandStatus(LbandStatus),                   // type 40
+    BasePositionQuality(BasePositionQuality),   // type 41
+    InsFullNav(InsFullNav),                     // type 49
+    InsRmsInfo(InsRmsInfo),                     // type 50
+    DmiRawData(DmiRawData),                     // type 52
+    InsVnavFullNav(InsVnavFullNav),             // type 63
+    InsVnavRmsInfo(InsVnavRmsInfo),             // type 64
     Unknown {
         gsof_type: u8,
         data: heapless::Vec<u8, 255>,
@@ -191,13 +209,26 @@ impl fmt::Display for GsofRecord {
             GsofRecord::TangentPlaneDelta(r) => write!(f, "{r}"),
             GsofRecord::Velocity(r) => write!(f, "{r}"),
             GsofRecord::PdopInfo(r) => write!(f, "{r}"),
+            GsofRecord::ClockInfo(r) => write!(f, "{r}"),
+            GsofRecord::PositionVcvInfo(r) => write!(f, "{r}"),
+            GsofRecord::PositionSigmaInfo(r) => write!(f, "{r}"),
             GsofRecord::BriefSvInfo(r) => write!(f, "{r}"),
             GsofRecord::SvDetailedInfo(r) => write!(f, "{r}"),
+            GsofRecord::ReceiverSerialNumber(r) => write!(f, "{r}"),
             GsofRecord::UtcTime(r) => write!(f, "{r}"),
             GsofRecord::AttitudeInfo(r) => write!(f, "{r}"),
             GsofRecord::AllBriefSvInfo(r) => write!(f, "{r}"),
             GsofRecord::AllDetailedSvInfo(r) => write!(f, "{r}"),
+            GsofRecord::ReceivedBaseInfo(r) => write!(f, "{r}"),
+            GsofRecord::BatteryMemoryInfo(r) => write!(f, "{r}"),
+            GsofRecord::PositionTypeInfo(r) => write!(f, "{r}"),
             GsofRecord::LbandStatus(r) => write!(f, "{r}"),
+            GsofRecord::BasePositionQuality(r) => write!(f, "{r}"),
+            GsofRecord::InsFullNav(r) => write!(f, "{r}"),
+            GsofRecord::InsRmsInfo(r) => write!(f, "{r}"),
+            GsofRecord::DmiRawData(r) => write!(f, "{r}"),
+            GsofRecord::InsVnavFullNav(r) => write!(f, "{r}"),
+            GsofRecord::InsVnavRmsInfo(r) => write!(f, "{r}"),
             GsofRecord::Unknown { gsof_type, data } => {
                 write!(f, "  GsofType:{gsof_type}  len:{}\n  ", data.len())?;
                 for (i, b) in data.iter().enumerate() {
@@ -501,6 +532,149 @@ impl fmt::Display for PdopInfo {
 }
 
 // ---------------------------------------------------------------------------
+// Type 10 — Clock Info
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct ClockInfo {
+    pub clock_flags: u8,
+    pub clock_offset_ms: f64,
+    pub freq_offset_ppm: f64,
+}
+
+impl ClockInfo {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 10);
+        Ok(Self {
+            clock_flags: r.u8()?,
+            clock_offset_ms: r.f64()?,
+            freq_offset_ppm: r.f64()?,
+        })
+    }
+}
+
+impl fmt::Display for ClockInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "  GsofType:10 - Clock Info  len:{}", 17)?;
+        write!(
+            f,
+            "  Flags:{:02X}  ClockOffset:{:.6} ms  FreqOffset:{:.6} ppm",
+            self.clock_flags, self.clock_offset_ms, self.freq_offset_ppm
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type 11 — Position VCV Info
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct PositionVcvInfo {
+    pub position_rms: f32,
+    pub vcv_xx: f32,
+    pub vcv_xy: f32,
+    pub vcv_xz: f32,
+    pub vcv_yy: f32,
+    pub vcv_yz: f32,
+    pub vcv_zz: f32,
+    pub unit_variance: f32,
+    pub num_epochs: u16,
+}
+
+impl PositionVcvInfo {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 11);
+        Ok(Self {
+            position_rms: r.f32()?,
+            vcv_xx: r.f32()?,
+            vcv_xy: r.f32()?,
+            vcv_xz: r.f32()?,
+            vcv_yy: r.f32()?,
+            vcv_yz: r.f32()?,
+            vcv_zz: r.f32()?,
+            unit_variance: r.f32()?,
+            num_epochs: r.u16()?,
+        })
+    }
+}
+
+impl fmt::Display for PositionVcvInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "  GsofType:11 - Position VCV Info  len:{}", 34)?;
+        writeln!(
+            f,
+            "  RMS:{:.4}  UnitVar:{:.4}  Epochs:{}",
+            self.position_rms, self.unit_variance, self.num_epochs
+        )?;
+        write!(
+            f,
+            "  VCV xx:{:.4e} xy:{:.4e} xz:{:.4e} yy:{:.4e} yz:{:.4e} zz:{:.4e}",
+            self.vcv_xx, self.vcv_xy, self.vcv_xz, self.vcv_yy, self.vcv_yz, self.vcv_zz
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type 12 — Position Sigma Info
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct PositionSigmaInfo {
+    pub position_rms: f32,
+    pub sigma_east: f32,
+    pub sigma_north: f32,
+    pub covar_east_north: f32,
+    pub sigma_up: f32,
+    pub semi_major_axis: f32,
+    pub semi_minor_axis: f32,
+    pub orientation_deg: f32,
+    pub unit_variance: f32,
+    pub num_epochs: u16,
+}
+
+impl PositionSigmaInfo {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 12);
+        Ok(Self {
+            position_rms: r.f32()?,
+            sigma_east: r.f32()?,
+            sigma_north: r.f32()?,
+            covar_east_north: r.f32()?,
+            sigma_up: r.f32()?,
+            semi_major_axis: r.f32()?,
+            semi_minor_axis: r.f32()?,
+            orientation_deg: r.f32()?,
+            unit_variance: r.f32()?,
+            num_epochs: r.u16()?,
+        })
+    }
+}
+
+impl fmt::Display for PositionSigmaInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "  GsofType:12 - Position Sigma Info  len:{}", 38)?;
+        writeln!(
+            f,
+            "  RMS:{:.4}  E:{:.4}  N:{:.4}  CovarEN:{:.4}  Up:{:.4}",
+            self.position_rms,
+            self.sigma_east,
+            self.sigma_north,
+            self.covar_east_north,
+            self.sigma_up
+        )?;
+        write!(
+            f,
+            "  SemiMajor:{:.4}  SemiMinor:{:.4}  Orient:{:.1}  UnitVar:{:.4}  Epochs:{}",
+            self.semi_major_axis,
+            self.semi_minor_axis,
+            self.orientation_deg,
+            self.unit_variance,
+            self.num_epochs
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Type 13 — Brief SV Info (GPS-only, older format)
 // ---------------------------------------------------------------------------
 
@@ -643,6 +817,31 @@ impl fmt::Display for SvDetailedInfo {
             )?;
         }
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type 15 — Receiver Serial Number
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct ReceiverSerialNumber {
+    pub serial_number: i32,
+}
+
+impl ReceiverSerialNumber {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 15);
+        Ok(Self {
+            serial_number: r.i32()?,
+        })
+    }
+}
+
+impl fmt::Display for ReceiverSerialNumber {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "  GsofType:15 - Receiver Serial Number  len:{}", 4)?;
+        write!(f, "  Serial:{}", self.serial_number)
     }
 }
 
@@ -952,6 +1151,215 @@ impl fmt::Display for AllDetailedSvInfo {
 }
 
 // ---------------------------------------------------------------------------
+// Type 35 — Received Base Info
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct ReceivedBaseInfo {
+    pub flags: u8,
+    pub name: [u8; 8],
+    pub base_id: u16,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub height_m: f64,
+}
+
+impl ReceivedBaseInfo {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 35);
+        let flags = r.u8()?;
+        let name = r.take::<8>()?;
+        Ok(Self {
+            flags,
+            name,
+            base_id: r.u16()?,
+            lat_deg: r.f64()? * RAD_TO_DEG,
+            lon_deg: r.f64()? * RAD_TO_DEG,
+            height_m: r.f64()?,
+        })
+    }
+
+    pub fn name_str(&self) -> &str {
+        core::str::from_utf8(&self.name).unwrap_or("????????")
+    }
+}
+
+impl fmt::Display for ReceivedBaseInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "  GsofType:35 - Received Base Info  len:{}", 35)?;
+        write!(
+            f,
+            "  Flags:{:02X}  Name:{}  Id:{}  Lat:{:.7}  Lon:{:.7}  Height:{:.3}",
+            self.flags,
+            self.name_str(),
+            self.base_id,
+            self.lat_deg,
+            self.lon_deg,
+            self.height_m
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type 37 — Battery/Memory Info
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct BatteryMemoryInfo {
+    pub battery_capacity: u16,
+    pub remaining_time: f64,
+}
+
+impl BatteryMemoryInfo {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 37);
+        Ok(Self {
+            battery_capacity: r.u16()?,
+            remaining_time: r.f64()?,
+        })
+    }
+}
+
+impl fmt::Display for BatteryMemoryInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "  GsofType:37 - Battery/Memory Info  len:{}", 10)?;
+        write!(
+            f,
+            "  BatteryCap:{}  RemainingTime:{:.1}",
+            self.battery_capacity, self.remaining_time
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type 38 — Position Type Info
+// ---------------------------------------------------------------------------
+
+/// Firmware >=4.40 extension fields.
+#[derive(Debug)]
+pub struct PositionTypeExt440 {
+    pub solution_flags: u8,
+    pub rtk_condition: u8,
+    pub correction_age: f32,
+    pub network_flags: u8,
+    pub network_flags2: u8,
+}
+
+/// Firmware >=4.82 extension fields.
+#[derive(Debug)]
+pub struct PositionTypeExt482 {
+    pub frame_flag: u8,
+    pub itrf_epoch: i16,
+    pub tectonic_plate: u8,
+    pub rtx_ram_sub_minutes_left: i32,
+}
+
+/// Firmware >=4.90 extension fields.
+#[derive(Debug)]
+pub struct PositionTypeExt490 {
+    pub pole_wobble_status: u8,
+    pub pole_wobble_distance: f32,
+}
+
+#[derive(Debug)]
+pub struct PositionTypeInfo {
+    pub error_scale: f32,
+    pub ext_440: Option<PositionTypeExt440>,
+    pub ext_482: Option<PositionTypeExt482>,
+    pub ext_490: Option<PositionTypeExt490>,
+    pub position_fix_type: Option<u8>,
+}
+
+impl PositionTypeInfo {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 38);
+        let error_scale = r.f32()?;
+
+        // fw 4.40 fields (8 bytes: 1+1+4+1+1)
+        let ext_440 = if data.len() > 4 {
+            Some(PositionTypeExt440 {
+                solution_flags: r.u8()?,
+                rtk_condition: r.u8()?,
+                correction_age: r.f32()?,
+                network_flags: r.u8()?,
+                network_flags2: r.u8()?,
+            })
+        } else {
+            None
+        };
+
+        // fw 4.82 fields (8 bytes: 1+2+1+4)
+        let ext_482 = if data.len() > 12 {
+            Some(PositionTypeExt482 {
+                frame_flag: r.u8()?,
+                itrf_epoch: r.i16()?,
+                tectonic_plate: r.u8()?,
+                rtx_ram_sub_minutes_left: r.i32()?,
+            })
+        } else {
+            None
+        };
+
+        // fw 4.90 fields (5 bytes: 1+4)
+        let ext_490 = if data.len() > 20 {
+            Some(PositionTypeExt490 {
+                pole_wobble_status: r.u8()?,
+                pole_wobble_distance: r.f32()?,
+            })
+        } else {
+            None
+        };
+
+        // fw 4.94 field (1 byte)
+        let position_fix_type = if data.len() > 25 { Some(r.u8()?) } else { None };
+
+        Ok(Self {
+            error_scale,
+            ext_440,
+            ext_482,
+            ext_490,
+            position_fix_type,
+        })
+    }
+}
+
+impl fmt::Display for PositionTypeInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "  GsofType:38 - Position Type Info")?;
+        write!(f, "  ErrorScale:{:.4}", self.error_scale)?;
+        if let Some(e) = &self.ext_440 {
+            write!(
+                f,
+                "\n  SolFlags:{:02X}  RTKcond:{}  CorrAge:{:.1}  NetFlags:{:02X} {:02X}",
+                e.solution_flags,
+                e.rtk_condition,
+                e.correction_age,
+                e.network_flags,
+                e.network_flags2
+            )?;
+        }
+        if let Some(e) = &self.ext_482 {
+            write!(
+                f,
+                "\n  FrameFlag:{}  ITRF:{}  TecPlate:{}  RTXminLeft:{}",
+                e.frame_flag, e.itrf_epoch, e.tectonic_plate, e.rtx_ram_sub_minutes_left
+            )?;
+        }
+        if let Some(e) = &self.ext_490 {
+            write!(
+                f,
+                "\n  PoleWobbleStat:{}  PoleWobbleDist:{:.3}",
+                e.pole_wobble_status, e.pole_wobble_distance
+            )?;
+        }
+        if let Some(ft) = self.position_fix_type {
+            write!(f, "\n  PosFixType:{}", ft)?;
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Type 40 — L-band Status
 // ---------------------------------------------------------------------------
 
@@ -1092,6 +1500,462 @@ impl fmt::Display for LbandStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Type 41 — Base Position and Quality
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct BasePositionQuality {
+    pub gps_time_ms: u32,
+    pub gps_week: u16,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub height_m: f64,
+    pub quality: u8,
+}
+
+impl BasePositionQuality {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 41);
+        Ok(Self {
+            gps_time_ms: r.u32()?,
+            gps_week: r.u16()?,
+            lat_deg: r.f64()? * RAD_TO_DEG,
+            lon_deg: r.f64()? * RAD_TO_DEG,
+            height_m: r.f64()?,
+            quality: r.u8()?,
+        })
+    }
+}
+
+impl fmt::Display for BasePositionQuality {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "  GsofType:41 - Base Position Quality  len:{}", 31)?;
+        write!(
+            f,
+            "  Week:{}  Time:{}ms  Lat:{:.7}  Lon:{:.7}  Height:{:.3}  Quality:{}",
+            self.gps_week,
+            self.gps_time_ms,
+            self.lat_deg,
+            self.lon_deg,
+            self.height_m,
+            self.quality
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type 49 — INS Full Navigation Info
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct InsFullNav {
+    pub gps_week: u16,
+    pub gps_time_ms: u32,
+    pub imu_alignment_status: u8,
+    pub gps_quality: u8,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub alt_m: f64,
+    pub north_vel_ms: f32,
+    pub east_vel_ms: f32,
+    pub down_vel_ms: f32,
+    pub total_speed_ms: f32,
+    pub roll_deg: f64,
+    pub pitch_deg: f64,
+    pub heading_deg: f64,
+    pub track_angle_deg: f64,
+    pub angular_rate_x: f32,
+    pub angular_rate_y: f32,
+    pub angular_rate_z: f32,
+    pub accel_x: f32,
+    pub accel_y: f32,
+    pub accel_z: f32,
+}
+
+impl InsFullNav {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 49);
+        Ok(Self {
+            gps_week: r.u16()?,
+            gps_time_ms: r.u32()?,
+            imu_alignment_status: r.u8()?,
+            gps_quality: r.u8()?,
+            lat_deg: r.f64()?,
+            lon_deg: r.f64()?,
+            alt_m: r.f64()?,
+            north_vel_ms: r.f32()?,
+            east_vel_ms: r.f32()?,
+            down_vel_ms: r.f32()?,
+            total_speed_ms: r.f32()?,
+            roll_deg: r.f64()?,
+            pitch_deg: r.f64()?,
+            heading_deg: r.f64()?,
+            track_angle_deg: r.f64()?,
+            angular_rate_x: r.f32()?,
+            angular_rate_y: r.f32()?,
+            angular_rate_z: r.f32()?,
+            accel_x: r.f32()?,
+            accel_y: r.f32()?,
+            accel_z: r.f32()?,
+        })
+    }
+}
+
+impl fmt::Display for InsFullNav {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "  GsofType:49 - INS Full Nav  len:{}", 104)?;
+        writeln!(
+            f,
+            "  Week:{}  Time:{}ms  IMU:{}  GPS:{}",
+            self.gps_week, self.gps_time_ms, self.imu_alignment_status, self.gps_quality
+        )?;
+        writeln!(
+            f,
+            "  Lat:{:.7}  Lon:{:.7}  Alt:{:.3}",
+            self.lat_deg, self.lon_deg, self.alt_m
+        )?;
+        writeln!(
+            f,
+            "  Vel N:{:.3} E:{:.3} D:{:.3}  Speed:{:.3}",
+            self.north_vel_ms, self.east_vel_ms, self.down_vel_ms, self.total_speed_ms
+        )?;
+        writeln!(
+            f,
+            "  Roll:{:.3}  Pitch:{:.3}  Heading:{:.3}  Track:{:.3}",
+            self.roll_deg, self.pitch_deg, self.heading_deg, self.track_angle_deg
+        )?;
+        writeln!(
+            f,
+            "  AngRate X:{:.3} Y:{:.3} Z:{:.3}",
+            self.angular_rate_x, self.angular_rate_y, self.angular_rate_z
+        )?;
+        write!(
+            f,
+            "  Accel X:{:.3} Y:{:.3} Z:{:.3}",
+            self.accel_x, self.accel_y, self.accel_z
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type 50 — INS RMS Info
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct InsRmsInfo {
+    pub gps_week: u16,
+    pub gps_time_ms: u32,
+    pub imu_alignment_status: u8,
+    pub gps_quality: u8,
+    pub north_pos_rms: f32,
+    pub east_pos_rms: f32,
+    pub down_pos_rms: f32,
+    pub north_vel_rms: f32,
+    pub east_vel_rms: f32,
+    pub down_vel_rms: f32,
+    pub roll_rms_deg: f32,
+    pub pitch_rms_deg: f32,
+    pub heading_rms_deg: f32,
+}
+
+impl InsRmsInfo {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 50);
+        Ok(Self {
+            gps_week: r.u16()?,
+            gps_time_ms: r.u32()?,
+            imu_alignment_status: r.u8()?,
+            gps_quality: r.u8()?,
+            north_pos_rms: r.f32()?,
+            east_pos_rms: r.f32()?,
+            down_pos_rms: r.f32()?,
+            north_vel_rms: r.f32()?,
+            east_vel_rms: r.f32()?,
+            down_vel_rms: r.f32()?,
+            roll_rms_deg: r.f32()?,
+            pitch_rms_deg: r.f32()?,
+            heading_rms_deg: r.f32()?,
+        })
+    }
+}
+
+impl fmt::Display for InsRmsInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "  GsofType:50 - INS RMS Info  len:{}", 44)?;
+        writeln!(
+            f,
+            "  Week:{}  Time:{}ms  IMU:{}  GPS:{}",
+            self.gps_week, self.gps_time_ms, self.imu_alignment_status, self.gps_quality
+        )?;
+        writeln!(
+            f,
+            "  PosRMS N:{:.4} E:{:.4} D:{:.4}",
+            self.north_pos_rms, self.east_pos_rms, self.down_pos_rms
+        )?;
+        writeln!(
+            f,
+            "  VelRMS N:{:.4} E:{:.4} D:{:.4}",
+            self.north_vel_rms, self.east_vel_rms, self.down_vel_rms
+        )?;
+        write!(
+            f,
+            "  AttRMS Roll:{:.3} Pitch:{:.3} Hdg:{:.3}",
+            self.roll_rms_deg, self.pitch_rms_deg, self.heading_rms_deg
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type 52 — DMI Raw Data
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct DmiMeasurement {
+    pub time_offset_ms: u16,
+    pub abs_dist_count: u32,
+    pub ud_dist_count: i32,
+}
+
+#[derive(Debug)]
+pub struct DmiRawData {
+    pub gps_week: u16,
+    pub gps_time_ms: u32,
+    pub measurements: heapless::Vec<DmiMeasurement, 16>,
+}
+
+impl DmiRawData {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 52);
+        let gps_week = r.u16()?;
+        let gps_time_ms = r.u32()?;
+        let count = r.u8()? as usize;
+
+        if count * 10 > r.remaining() {
+            return Err(ParseError::OverflowingCount {
+                record_type: 52,
+                count,
+                bytes_per_item: 10,
+                available: r.remaining(),
+            });
+        }
+
+        let mut measurements = heapless::Vec::new();
+        for _ in 0..count {
+            measurements
+                .push(DmiMeasurement {
+                    time_offset_ms: r.u16()?,
+                    abs_dist_count: r.u32()?,
+                    ud_dist_count: r.i32()?,
+                })
+                .map_err(|_| ParseError::OverflowingCount {
+                    record_type: 52,
+                    count,
+                    bytes_per_item: 10,
+                    available: 16,
+                })?;
+        }
+
+        Ok(Self {
+            gps_week,
+            gps_time_ms,
+            measurements,
+        })
+    }
+}
+
+impl fmt::Display for DmiRawData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "  GsofType:52 - DMI Raw Data  len:{}",
+            7 + self.measurements.len() * 10
+        )?;
+        write!(
+            f,
+            "  Week:{}  Time:{}ms  Meas:{}",
+            self.gps_week,
+            self.gps_time_ms,
+            self.measurements.len()
+        )?;
+        for (i, m) in self.measurements.iter().enumerate() {
+            write!(
+                f,
+                "\n  [{}] Offset:{}ms  AbsDist:{}  UdDist:{}",
+                i, m.time_offset_ms, m.abs_dist_count, m.ud_dist_count
+            )?;
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type 63 — INS VNAV Full Navigation Info (Krypton)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct InsVnavFullNav {
+    pub gps_week: u16,
+    pub gps_time_ms: u32,
+    pub imu_alignment_status: u8,
+    pub gps_quality: u8,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub alt_m: f64,
+    pub north_vel_ms: f32,
+    pub east_vel_ms: f32,
+    pub down_vel_ms: f32,
+    pub total_speed_ms: f32,
+    pub roll_deg: f64,
+    pub pitch_deg: f64,
+    pub heading_deg: f64,
+    pub track_angle_deg: f64,
+    pub angular_rate_x: f32,
+    pub angular_rate_y: f32,
+    pub angular_rate_z: f32,
+    pub accel_x: f32,
+    pub accel_y: f32,
+    pub accel_z: f32,
+    pub heave_m: f64,
+}
+
+impl InsVnavFullNav {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 63);
+        Ok(Self {
+            gps_week: r.u16()?,
+            gps_time_ms: r.u32()?,
+            imu_alignment_status: r.u8()?,
+            gps_quality: r.u8()?,
+            lat_deg: r.f64()?,
+            lon_deg: r.f64()?,
+            alt_m: r.f64()?,
+            north_vel_ms: r.f32()?,
+            east_vel_ms: r.f32()?,
+            down_vel_ms: r.f32()?,
+            total_speed_ms: r.f32()?,
+            roll_deg: r.f64()?,
+            pitch_deg: r.f64()?,
+            heading_deg: r.f64()?,
+            track_angle_deg: r.f64()?,
+            angular_rate_x: r.f32()?,
+            angular_rate_y: r.f32()?,
+            angular_rate_z: r.f32()?,
+            accel_x: r.f32()?,
+            accel_y: r.f32()?,
+            accel_z: r.f32()?,
+            heave_m: r.f64()?,
+        })
+    }
+}
+
+impl fmt::Display for InsVnavFullNav {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "  GsofType:63 - INS VNAV Full Nav  len:{}", 112)?;
+        writeln!(
+            f,
+            "  Week:{}  Time:{}ms  IMU:{}  GPS:{}",
+            self.gps_week, self.gps_time_ms, self.imu_alignment_status, self.gps_quality
+        )?;
+        writeln!(
+            f,
+            "  Lat:{:.7}  Lon:{:.7}  Alt:{:.3}",
+            self.lat_deg, self.lon_deg, self.alt_m
+        )?;
+        writeln!(
+            f,
+            "  Vel N:{:.3} E:{:.3} D:{:.3}  Speed:{:.3}",
+            self.north_vel_ms, self.east_vel_ms, self.down_vel_ms, self.total_speed_ms
+        )?;
+        writeln!(
+            f,
+            "  Roll:{:.3}  Pitch:{:.3}  Heading:{:.3}  Track:{:.3}",
+            self.roll_deg, self.pitch_deg, self.heading_deg, self.track_angle_deg
+        )?;
+        writeln!(
+            f,
+            "  AngRate X:{:.3} Y:{:.3} Z:{:.3}",
+            self.angular_rate_x, self.angular_rate_y, self.angular_rate_z
+        )?;
+        writeln!(
+            f,
+            "  Accel X:{:.3} Y:{:.3} Z:{:.3}",
+            self.accel_x, self.accel_y, self.accel_z
+        )?;
+        write!(f, "  Heave:{:.3}", self.heave_m)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type 64 — INS VNAV RMS Info (Krypton)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct InsVnavRmsInfo {
+    pub gps_week: u16,
+    pub gps_time_ms: u32,
+    pub imu_alignment_status: u8,
+    pub gps_quality: u8,
+    pub north_pos_rms: f32,
+    pub east_pos_rms: f32,
+    pub down_pos_rms: f32,
+    pub north_vel_rms: f32,
+    pub east_vel_rms: f32,
+    pub down_vel_rms: f32,
+    pub roll_rms_deg: f32,
+    pub pitch_rms_deg: f32,
+    pub heading_rms_deg: f32,
+    pub heave_rms_m: f32,
+}
+
+impl InsVnavRmsInfo {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
+        let mut r = Reader::new(data, 64);
+        Ok(Self {
+            gps_week: r.u16()?,
+            gps_time_ms: r.u32()?,
+            imu_alignment_status: r.u8()?,
+            gps_quality: r.u8()?,
+            north_pos_rms: r.f32()?,
+            east_pos_rms: r.f32()?,
+            down_pos_rms: r.f32()?,
+            north_vel_rms: r.f32()?,
+            east_vel_rms: r.f32()?,
+            down_vel_rms: r.f32()?,
+            roll_rms_deg: r.f32()?,
+            pitch_rms_deg: r.f32()?,
+            heading_rms_deg: r.f32()?,
+            heave_rms_m: r.f32()?,
+        })
+    }
+}
+
+impl fmt::Display for InsVnavRmsInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "  GsofType:64 - INS VNAV RMS Info  len:{}", 48)?;
+        writeln!(
+            f,
+            "  Week:{}  Time:{}ms  IMU:{}  GPS:{}",
+            self.gps_week, self.gps_time_ms, self.imu_alignment_status, self.gps_quality
+        )?;
+        writeln!(
+            f,
+            "  PosRMS N:{:.4} E:{:.4} D:{:.4}",
+            self.north_pos_rms, self.east_pos_rms, self.down_pos_rms
+        )?;
+        writeln!(
+            f,
+            "  VelRMS N:{:.4} E:{:.4} D:{:.4}",
+            self.north_vel_rms, self.east_vel_rms, self.down_vel_rms
+        )?;
+        write!(
+            f,
+            "  AttRMS Roll:{:.3} Pitch:{:.3} Hdg:{:.3}  HeaveRMS:{:.4}",
+            self.roll_rms_deg, self.pitch_rms_deg, self.heading_rms_deg, self.heave_rms_m
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Top-level GSOF record dispatcher
 // ---------------------------------------------------------------------------
 
@@ -1130,11 +1994,23 @@ pub fn parse_gsof_record(gsof_type: u8, data: &[u8]) -> GsofRecord {
         9 => PdopInfo::parse(data)
             .map(GsofRecord::PdopInfo)
             .unwrap_or_else(|_| unknown(gsof_type, data)),
+        10 => ClockInfo::parse(data)
+            .map(GsofRecord::ClockInfo)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
+        11 => PositionVcvInfo::parse(data)
+            .map(GsofRecord::PositionVcvInfo)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
+        12 => PositionSigmaInfo::parse(data)
+            .map(GsofRecord::PositionSigmaInfo)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
         13 => BriefSvInfo::parse(data)
             .map(GsofRecord::BriefSvInfo)
             .unwrap_or_else(|_| unknown(gsof_type, data)),
         14 => SvDetailedInfo::parse(data)
             .map(GsofRecord::SvDetailedInfo)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
+        15 => ReceiverSerialNumber::parse(data)
+            .map(GsofRecord::ReceiverSerialNumber)
             .unwrap_or_else(|_| unknown(gsof_type, data)),
         16 => UtcTime::parse(data)
             .map(GsofRecord::UtcTime)
@@ -1148,8 +2024,35 @@ pub fn parse_gsof_record(gsof_type: u8, data: &[u8]) -> GsofRecord {
         34 => AllDetailedSvInfo::parse(data)
             .map(GsofRecord::AllDetailedSvInfo)
             .unwrap_or_else(|_| unknown(gsof_type, data)),
+        35 => ReceivedBaseInfo::parse(data)
+            .map(GsofRecord::ReceivedBaseInfo)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
+        37 => BatteryMemoryInfo::parse(data)
+            .map(GsofRecord::BatteryMemoryInfo)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
+        38 => PositionTypeInfo::parse(data)
+            .map(GsofRecord::PositionTypeInfo)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
         40 => LbandStatus::parse(data)
             .map(GsofRecord::LbandStatus)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
+        41 => BasePositionQuality::parse(data)
+            .map(GsofRecord::BasePositionQuality)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
+        49 => InsFullNav::parse(data)
+            .map(GsofRecord::InsFullNav)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
+        50 => InsRmsInfo::parse(data)
+            .map(GsofRecord::InsRmsInfo)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
+        52 => DmiRawData::parse(data)
+            .map(GsofRecord::DmiRawData)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
+        63 => InsVnavFullNav::parse(data)
+            .map(GsofRecord::InsVnavFullNav)
+            .unwrap_or_else(|_| unknown(gsof_type, data)),
+        64 => InsVnavRmsInfo::parse(data)
+            .map(GsofRecord::InsVnavRmsInfo)
             .unwrap_or_else(|_| unknown(gsof_type, data)),
         _ => unknown(gsof_type, data),
     }
