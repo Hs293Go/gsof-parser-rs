@@ -16,6 +16,7 @@ mod gsof;
 mod reassembly;
 mod trimcomm;
 
+use clap::{Parser, ValueEnum};
 use reassembly::Reassembler;
 use std::io::{self, BufReader};
 use std::net::TcpStream;
@@ -42,7 +43,9 @@ fn run(reader: &mut impl io::Read) {
             Ok(Some(pkt)) => {
                 println!(
                     "STX:02h  Stat:{:02X}h  Type:{:02X}h  Len:{}  CS:??h  ETX:03h",
-                    pkt.stat, pkt.packet_type, pkt.data.len(),
+                    pkt.stat,
+                    pkt.packet_type,
+                    pkt.data.len(),
                 );
 
                 if pkt.packet_type != TYPE_GSOF {
@@ -63,9 +66,7 @@ fn run(reader: &mut impl io::Read) {
                                 Err(e) => eprintln!("Parse error: {e}"),
                                 Ok(records) => {
                                     println!("\nGSOF Records");
-                                    for rec in &records {
-                                        println!("{rec}\n");
-                                    }
+                                    records.iter().for_each(|rec| println!("{rec}\n"));
                                 }
                             }
                         }
@@ -76,17 +77,27 @@ fn run(reader: &mut impl io::Read) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Argument parsing and source dispatch
-// ---------------------------------------------------------------------------
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+pub enum Transport {
+    #[default]
+    Stdin,
+    Tcp,
+    Serial,
+}
 
-fn usage() -> ! {
-    eprintln!("Usage:");
-    eprintln!("  gsof_parser                              # stdin");
-    eprintln!("  gsof_parser --tcp <host:port>            # TCP");
-    eprintln!("  gsof_parser --serial <device>            # serial @ 115200 baud");
-    eprintln!("  gsof_parser --serial <device> --baud <N> # serial @ custom baud");
-    std::process::exit(1);
+#[derive(Parser, Debug)]
+struct Args {
+    #[clap(short, long)]
+    pub transport: Transport,
+
+    #[clap(short, long, default_value = "/dev/ttyUSB0")]
+    pub device: String,
+
+    #[clap(short, long, default_value = "38400")]
+    pub baud: u32,
+
+    #[clap(long, default_value = "localhost:9000")]
+    pub host: String,
 }
 
 fn die(msg: impl std::fmt::Display) -> ! {
@@ -95,37 +106,31 @@ fn die(msg: impl std::fmt::Display) -> ! {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let args: Vec<&str>   = args.iter().map(String::as_str).collect();
+    let args = Args::parse();
 
     eprintln!("GSOF Parser (Rust)");
+    eprintln!("Source: {:?}", args.transport);
 
-    match args.as_slice() {
+    match args.transport {
         // ── stdin ──────────────────────────────────────────────────────────
-        [] => {
-            eprintln!("Source: stdin");
-            run(&mut BufReader::new(io::stdin().lock()));
-        }
 
         // ── TCP ────────────────────────────────────────────────────────────
-        ["--tcp", addr] => {
-            eprintln!("Source: TCP {addr}");
-            let stream = TcpStream::connect(addr)
-                .unwrap_or_else(|e| die(format_args!("TCP connect to {addr} failed: {e}")));
+        Transport::Tcp => {
+            let stream = TcpStream::connect(args.host.clone())
+                .unwrap_or_else(|e| die(format_args!("TCP connect to {} failed: {e}", args.host)));
             run(&mut BufReader::new(stream));
         }
 
         // ── serial (default baud) ──────────────────────────────────────────
-        ["--serial", device] => open_serial(device, 115_200),
 
         // ── serial (explicit baud) ─────────────────────────────────────────
-        ["--serial", device, "--baud", baud] => {
-            let baud: u32 = baud.parse()
-                .unwrap_or_else(|_| die(format_args!("Invalid baud rate: {baud}")));
-            open_serial(device, baud);
+        Transport::Serial => {
+            open_serial(&args.device, args.baud);
         }
 
-        _ => usage(),
+        Transport::Stdin => {
+            run(&mut io::stdin());
+        }
     }
 }
 
